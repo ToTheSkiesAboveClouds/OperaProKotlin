@@ -1,104 +1,91 @@
-# Hotel Reception (Android)
+# Hotel Reception — Qonaev
 
-This is the Android version of my HW1 console project. In HW1 the hotel reception ran in the terminal with `println` and a menu. Now the same hotel, Almaty Grand, has a real screen: a list of rooms, check-in, room service, check-out with a bill and housekeeping.
+Android-приложение для администратора отеля (ресепшен): брони, заселение и выселение, биллинг, статусы номеров, внутренние запросы отделам и список телефонов. Midterm Project — Android Application (Part 1).
 
-Built with Kotlin, Jetpack Compose and Material 3. State lives in a `ViewModel`.
+Стек: Kotlin, Jetpack Compose, Material 3, Navigation Compose, ViewModel + StateFlow, корутины.
 
-## What it does
+## Скриншоты
 
-- Shows 20 rooms (5 floors, Standard / Deluxe / Suite) in a `LazyColumn`.
-- Search by room number or type, plus an "only free rooms" checkbox.
-- Tap a free room to check a guest in (name, number of nights, VIP checkbox).
-- Tap an occupied room to order food, laundry or a taxi, or to check the guest out and get the bill. VIP guests get 10% off.
-- Checked-out rooms become "dirty". The "Clean" button sends housekeeping to all of them at once (coroutines, same idea as `async/awaitAll` in HW1).
-- Top row shows occupied rooms, rooms waiting for cleaning and revenue.
-- A yellow card at the top demonstrates what happens to state when the screen is rotated.
+| Главная | Брони (фильтры) | Карточка брони |
+|---|---|---|
+| ![Главная](screenshots/01_dashboard.png) | ![Фильтры броней](screenshots/02_reservations_filters.png) | ![Карточка брони](screenshots/03_reservation_details.png) |
 
-## How to run
+| Паспорт и заселение | Биллинг | Номера |
+|---|---|---|
+| ![Паспорт](screenshots/04_reservation_passport.png) | ![Биллинг](screenshots/05_billing.png) | ![Номера](screenshots/06_rooms.png) |
 
-1. Open the project in Android Studio and wait for Gradle sync to finish.
-2. Pick an emulator (or a phone with USB debugging) in the device list.
-3. Press Run.
+| Запросы | Новый запрос |
+|---|---|
+| ![Запросы](screenshots/07_requests.png) | ![Новый запрос](screenshots/08_new_request.png) |
 
-## Project structure
+## Возможности
 
-Everything is in the package `com.example.hotelreception`, in `app/src/main/java/...`.
+1. **Главная (Dashboard).** Статистика дня в четырёх карточках: Arrivals, Departures, «Гостей в отеле» и «Загрузка отеля». Все карточки нажимаются и ведут в нужный список броней или на полноэкранную таблицу доступности номеров на 7 дней. Блок «Состояние номеров» показывает цветную полосу пропорций и плитки по пяти статусам уборки. Здесь же выбор языка.
+2. **Брони.** Вкладки Arrivals, In-house и «Все брони», поиск по номеру комнаты, брони и гостю. Остальные фильтры спрятаны в окно (значок фильтра с цифрой включённых): диапазон заездов, проживающие / выселенные / все, статус и дата. Создание новой брони с проверкой доступности и тарифом (BAR / WEB / CORP).
+3. **Автоназначение номера.** Для скорых заездов номер подбирается сам: класс брони, свободные даты, чистота номера, пожелание гостя.
+4. **Карточка брони.** Даты, класс, цена и итого, способ оплаты, контакты, компания, лояльность. Скан паспорта (камера или галерея) при заселении, чек-лист условий заселения.
+5. **Биллинг.** Услуги и платежи, баланс. Выселение возможно только при балансе 0. Больше 0: гость должен, меньше 0: предоплата.
+6. **Номера.** Сетка номеров с цветами статусов: Inspected (зелёный), Clean (синий), Dirty (красный), Pickup (жёлтый), Maintenance (чёрный). Фильтры: занятость (чипы), этаж и статус уборки (выпадающие списки). Смена статуса по правилам, кнопка «Убрать все Dirty» (корутины).
+7. **Запросы отделам (как в Sara).** Две группы переключателей: «Мои / Все» и «Активные / Закрытые». Выбор отдела выпадающим списком, поиск по комнате, создание запроса с фото и видео, смена статуса.
+8. **Контакты.** Внутренние телефоны отделов в сворачиваемых группах, при поиске группы раскрываются сами.
+9. **Два языка (RU / EN).** Переключатель на главной, выбор запоминается. Переводится весь интерфейс, данные гостей не меняются.
+10. **Тема.** Material 3, акцентный синий цвет из логотипа Qonaev, светлая и тёмная темы.
 
-| File | What is inside |
-| --- | --- |
-| `Models.kt` | `RoomType`, `Room`, `Guest`, `Booking` and the sealed class `ServiceOrder` (from HW1) |
-| `HotelViewModel.kt` | `HotelUiState` and `HotelViewModel`: search, check-in, services, check-out, cleaning |
-| `Components.kt` | Reusable composables: `StatusBadge`, `SearchField`, `RoomCard`, `StatCard`, `InfoRow`, `StateDemoCard` |
-| `HotelScreen.kt` | The main screen and the three dialogs (check-in, booking details, bill) |
-| `HotelIcons.kt` | Small vector icons drawn in code |
-| `HotelTheme.kt` | Material 3 colors |
-| `MainActivity.kt` | Entry point, just calls `HotelScreen()` |
+Классы номеров: DBC (стандарт), TWC (раздельные кровати), DBE (улучшенный стандарт), SKD (полулюкс), SKC (люкс).
 
-The UI never changes data by itself. A composable calls a function of the `ViewModel`, the `ViewModel` puts a new `HotelUiState` into a `StateFlow`, and the screen redraws from it.
+## Как запустить
 
-## Screenshots and what they show
+1. Установить Android Studio (версия с поддержкой AGP 9.x).
+2. Открыть папку проекта (`File → Open`).
+3. `File → Sync Project with Gradle Files`.
+4. Выбрать эмулятор или телефон (Android 8.0, API 26 и выше) и нажать **Run**.
 
-### 1. Main screen before rotation (portrait)
+Данные хранятся в памяти и сбрасываются при полном закрытии приложения. При повороте экрана всё сохраняется.
 
-![Main screen, portrait](screenshots/01_before_rotation.png)
+## Архитектура
 
-This is the main screen with a search for `suite` and the "Only free" checkbox ticked, so the list shows only free Suites (rooms 104, 204, 304, 404, 504), each with a green "Free" badge. The "Clean (0)" button is greyed out because no room is waiting for cleaning.
+Код разделён на слои. Пакет один, слои разделены по файлам.
 
-On the yellow demo card I pressed `+1` for `remember` 3 times, for `rememberSaveable` 5 times and for `ViewModel` 7 times, so the counters read 3, 5 and 7.
+| Слой | Файлы | Что делает |
+|---|---|---|
+| Данные | `Models.kt`, `SeedData.kt`, `HotelRepository.kt` | Классы данных, стартовые данные, хранилище (`MutableStateFlow<HotelData>`) и операции над ним |
+| Язык | `I18n.kt` | Словарь и функция `tr()`, переводят показываемый текст RU / EN |
+| Бизнес-правила | `HotelRules.kt`, `Format.kt` | Чистые функции: занятость, свободные номера, автоназначение, доступность, фильтры |
+| Состояние | `*ViewModel.kt` | `StateFlow`, фильтры, действия экранов |
+| UI | `*Screen.kt`, `Components.kt`, `FilterComponents.kt`, `TopBar.kt`, `AvailabilityScreen.kt`, `HotelTheme.kt`, `HotelIcons.kt` | Экраны на Compose и переиспользуемые компоненты |
+| Навигация | `HotelScreen.kt` | `NavHost`, нижняя панель, создание ViewModel |
 
-### 2. Main screen after rotation (landscape)
+Как это связано:
 
-![Main screen, landscape](screenshots/02_after_rotation.png)
+- **Navigation Compose.** 5 разделов в нижней панели и 5 экранов поверх них (карточка брони, биллинг, новая бронь, новый запрос, доступность номеров). Параметры передаются в маршруте (`reservation/{id}`). Переключение разделов сохраняет состояние каждого (`saveState` / `restoreState`).
+- **ViewModel и StateFlow.** Экран подписывается через `collectAsStateWithLifecycle()`, то есть только пока он виден. Состояние собирается операторами `combine` и `stateIn`.
+- **Единый источник данных.** Репозиторий отдаёт `StateFlow`, ViewModel'и преобразуют его для экранов. Экраны данные не меняют, а вызывают методы ViewModel.
+- **State hoisting.** Экраны получают состояние и колбэки параметрами, состояние поднято в ViewModel.
+- **remember и rememberSaveable.** Введённый текст и поля форм хранятся через `rememberSaveable` (переживают поворот), мелкие UI-флаги через `remember`.
+- **Корутины.** `viewModelScope`, `async` / `awaitAll`, `withContext(Dispatchers.IO)` для файлов.
 
-Same app after turning the emulator to landscape. The `remember` counter dropped back to 0, while `rememberSaveable` is still 5 and `ViewModel` is still 7.
+## Структура проекта
 
-A rotation destroys the Activity and creates a new one, so the composition starts from scratch and everything stored with plain `remember` is lost. `rememberSaveable` writes its value into the `Bundle` that Android saves and gives to the new Activity, so it survives. The `ViewModel` is kept by Android in a separate store that lives through configuration changes, so `viewModel()` returns the same object after the rotation. The search text and the checkbox from screenshot 1 are also kept in the `ViewModel` (in `HotelUiState`), which is why they do not reset either.
+```
+app/src/main/java/com/example/hotelreception/
+├── MainActivity.kt
+├── HotelScreen.kt            навигация
+├── Models.kt  SeedData.kt  HotelRepository.kt  HotelRules.kt  Format.kt
+├── HotelViewModel.kt  DashboardViewModel.kt  ReservationsViewModel.kt
+├── RoomsViewModel.kt  RequestsViewModel.kt  ContactsViewModel.kt
+├── Components.kt  HotelTheme.kt  HotelIcons.kt  Media.kt
+└── DashboardScreen.kt  ReservationsScreen.kt  ReservationDetailsScreen.kt
+    BillingScreen.kt  NewReservationScreen.kt  RoomsScreen.kt
+    RequestsScreen.kt  NewRequestScreen.kt  ContactsScreen.kt
+```
 
-### 3. Check-in dialog
+## Что можно попробовать в демо
 
-![Check-in dialog](screenshots/03_checkin_dialog.png)
-
-I tapped the free Suite 104. The dialog shows the room type and the price per night (Suite, 75 000 ₸). It has a text field for the guest name, a numeric field for the nights (1 to 30) and a checkbox for a VIP guest (10% discount).
-
-The "Check in" button is disabled because the name is empty. It becomes active only when the name is not blank and the number of nights is valid. This is the second user interaction besides search and filtering: adding a guest. The fields of this form are stored with `rememberSaveable`, so a half-typed name survives a rotation, and they do not need to be in the `ViewModel` because they only matter while the dialog is open.
-
-### 4. Booking dialog without services
-
-![Booking dialog, no services](screenshots/04_booking_no_services.png)
-
-I tapped the occupied room 203 (guest Dmitry, 2 nights). The dialog shows the stay cost (2 nights × 40 000 ₸ = 80 000 ₸) and "No services yet". Three buttons order food, laundry or a taxi, and "Check out" closes the stay and shows the bill. The total at the bottom is 80 000 ₸.
-
-### 5. Booking dialog after ordering services
-
-![Booking dialog, with services](screenshots/05_booking_with_services.png)
-
-Here I pressed "Food to the room" twice. Two lines of 6 000 ₸ appeared in the list and the total changed from 80 000 ₸ to 92 000 ₸ (80 000 + 6 000 + 6 000). Dmitry is not a VIP, so there is no discount. The dialog updates immediately because the `ViewModel` puts a new `Booking` into the state and the UI redraws from it.
-
-When there are many orders, the list of services has a maximum height and scrolls by itself, while the order buttons and the total stay in place.
-
-## remember vs rememberSaveable vs ViewModel
-
-| | `remember` | `rememberSaveable` | `ViewModel` |
-| --- | --- | --- | --- |
-| Survives rotation | no | yes | yes |
-| Survives the system killing the process | no | yes | no |
-| Used here for | the demo counter | the demo counter, the fields of the check-in dialog | rooms, bookings, search, filter, revenue |
-| Good for | tiny temporary UI state | small things the user would be annoyed to lose (typed text) | screen state and logic |
-
-## Requirements checklist
-
-| Requirement | Where |
-| --- | --- |
-| Kotlin + Compose + Material 3 | whole project, theme in `HotelTheme.kt` |
-| 3+ reusable composables | `Components.kt` |
-| `Row`, `Column`, `Box` | `RoomCard`, `HotelScreen` |
-| `LazyColumn`, `Card`, `Text`, `Image` | `HotelScreen`, `RoomCard` |
-| 2+ user interactions | search, filter, check-in, services, check-out, cleaning |
-| `TextField`, `Button`, `Checkbox` | search field, check-in dialog, filter row |
-| `remember` / `rememberSaveable` | `StateDemoCard`, `CheckInDialog` |
-| `ViewModel`, UI separated from state | `HotelViewModel.kt`, `collectAsState()` in `HotelScreen` |
-| State on rotation | screenshots 1 and 2 |
-
-## Known limits
-
-Data is kept in memory only, so closing the app resets the hotel to its starting state. Saving to a database (Room) would be the next step.
+- Главная: нажать карточку «Загрузка отеля» (таблица доступности), Arrivals, Departures; переключить язык.
+- Брони → Arrivals: у сегодняшних заездов номер уже назначен автоматически.
+- Sarah Johnson (In-house): баланс больше 0, выселить нельзя, пока не оплатит.
+- Zhang Wei: баланс меньше 0 (предоплата).
+- Заселение без скана паспорта запрещено.
+- Номера: фильтр по этажу и статусу, смена статуса, «Убрать все Dirty».
+- Запросы: создать запрос в отдел с фото, найти по номеру комнаты.
+- Повернуть экран: введённые фильтры и формы сохраняются.
