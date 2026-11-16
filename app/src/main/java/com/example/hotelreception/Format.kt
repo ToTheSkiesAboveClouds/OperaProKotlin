@@ -39,3 +39,6 @@ fun nightsText(n: Int): String {
     }
     return "$n $word"
 }
+
+// "16.11 14:30" — дата и время для смен
+fun LocalDateTime.stamp(): String = format(java.time.format.DateTimeFormatter.ofPattern("dd.MM HH:mm"))

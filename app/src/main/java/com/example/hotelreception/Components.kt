@@ -38,6 +38,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.AlertDialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -604,4 +605,27 @@ fun RequestCard(request: ServiceRequest, onClick: () -> Unit, modifier: Modifier
             }
         }
     }
+}
+
+// Окно подтверждения опасного действия (удаление). Само ничего не удаляет:
+// только сообщает экрану, что пользователь нажал «Удалить» или «Отмена».
+@Composable
+fun ConfirmDialog(
+    title: String,
+    text: String,
+    confirmLabel: String = "Удалить",
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = { Text(text) },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(confirmLabel, color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } }
+    )
 }

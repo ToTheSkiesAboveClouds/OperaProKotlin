@@ -94,7 +94,9 @@ data class FolioEntry(
     val title: String,
     val amount: Int,
     val type: EntryType,
-    val date: LocalDate
+    val date: LocalDate,
+    val method: PaymentMethod? = null,   // чем оплачено (только для оплат и возвратов)
+    val shiftId: Int? = null              // в какую кассовую смену попала операция
 ) {
     val signed: Int get() = amount * type.sign
 }
@@ -225,6 +227,54 @@ data class ServiceRequest(
     val status: RequestStatus
 )
 
+// ---------- Кассовая смена ресепшена ----------
+
+enum class ShiftStatus(val label: String) {
+    OPEN("Открыта"),
+    CLOSED("Закрыта")
+}
+
+// Итоги смены: сколько принято по способам оплаты и сколько возвращено гостям
+data class ShiftTotals(
+    val cash: Int = 0,
+    val card: Int = 0,
+    val transfer: Int = 0,
+    val company: Int = 0,
+    val cashRefunds: Int = 0,
+    val otherRefunds: Int = 0,
+    val paymentsCount: Int = 0
+) {
+    val received: Int get() = cash + card + transfer + company
+    val refunds: Int get() = cashRefunds + otherRefunds
+}
+
+// Смена: открывается с остатком в кассе, закрывается подсчётом наличных.
+// Итоги открытой смены считаются на лету из счетов гостей, у закрытой записаны при закрытии.
+data class Shift(
+    val id: Int,
+    val openedBy: String,
+    val openedAt: LocalDateTime,
+    val openingCash: Int,
+    val status: ShiftStatus,
+    val closedAt: LocalDateTime?,
+    val totals: ShiftTotals,
+    val countedCash: Int?,     // сколько наличных насчитали при закрытии
+    val note: String
+) {
+    // Сколько наличных должно быть в кассе: остаток + принятые наличные − наличные возвраты
+    val expectedCash: Int get() = openingCash + totals.cash - totals.cashRefunds
+
+    // Разница: > 0 излишек, < 0 недостача
+    val difference: Int? get() = countedCash?.let { it - expectedCash }
+}
+
+// Операция смены (оплата или возврат) вместе с гостем, для списка на экране смены
+data class ShiftOperation(
+    val reservationId: Int,
+    val guestName: String,
+    val entry: FolioEntry
+)
+
 // ---------- Список внутренних телефонов ----------
 
 data class ContactEntry(val label: String, val ext: String)
@@ -238,9 +288,11 @@ data class HotelData(
     val reservations: List<Reservation>,
     val requests: List<ServiceRequest>,
     val contacts: List<ContactGroup>,
+    val shifts: List<Shift>,
     val nextReservationId: Int,
     val nextEntryId: Int,
-    val nextRequestId: Int
+    val nextRequestId: Int,
+    val nextShiftId: Int
 )
 
 // ---------- Результат операции ----------

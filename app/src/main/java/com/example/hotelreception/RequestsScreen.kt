@@ -41,6 +41,7 @@ fun RequestsScreen(
     viewModel: RequestsViewModel,
     snackbarHostState: SnackbarHostState,
     onNewRequest: (Department) -> Unit,
+    onEditRequest: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -51,6 +52,8 @@ fun RequestsScreen(
     // Меню выбора отдела: пока открыто, пока не нажали. Поворот его закрывает — это нормально, поэтому remember
     var menuOpen by remember { mutableStateOf(false) }
     var selectedId by rememberSaveable { mutableStateOf<Int?>(null) }
+    // Запрос, который ждёт подтверждения удаления
+    var deleteId by rememberSaveable { mutableStateOf<Int?>(null) }
 
     Box(modifier = modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -145,7 +148,26 @@ fun RequestsScreen(
         RequestDialog(
             request = selected,
             onAdvance = { status -> viewModel.advance(selected.id, status) },
+            onEdit = {
+                selectedId = null
+                onEditRequest(selected.id)
+            },
+            onDelete = { deleteId = selected.id },
             onDismiss = { selectedId = null }
+        )
+    }
+
+    val toDelete = state.all.firstOrNull { it.id == deleteId }
+    if (toDelete != null) {
+        ConfirmDialog(
+            title = "Удалить запрос?",
+            text = "Запрос «${toDelete.title}» (${toDelete.location}) будет удалён без возможности восстановления.",
+            onConfirm = {
+                viewModel.deleteRequest(toDelete.id)
+                deleteId = null
+                selectedId = null
+            },
+            onDismiss = { deleteId = null }
         )
     }
 }
@@ -154,6 +176,8 @@ fun RequestsScreen(
 private fun RequestDialog(
     request: ServiceRequest,
     onAdvance: (RequestStatus) -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
     onDismiss: () -> Unit
 ) {
     AlertDialog(
@@ -198,8 +222,17 @@ private fun RequestDialog(
             }
         },
         dismissButton = {
-            if (request.status != RequestStatus.DONE) {
-                TextButton(onClick = onDismiss) { Text("Закрыть") }
+            Row {
+                // Закрытый запрос менять нельзя, удалить можно
+                if (request.status != RequestStatus.DONE) {
+                    TextButton(onClick = onEdit) { Text("Изменить") }
+                }
+                TextButton(onClick = onDelete) {
+                    Text("Удалить", color = MaterialTheme.colorScheme.error)
+                }
+                if (request.status != RequestStatus.DONE) {
+                    TextButton(onClick = onDismiss) { Text("Закрыть") }
+                }
             }
         }
     )

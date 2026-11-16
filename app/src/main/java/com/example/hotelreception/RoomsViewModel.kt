@@ -78,7 +78,7 @@ class RoomsViewModel(
     // Выбор этажа в выпадающем списке (null = все этажи)
     fun selectFloor(floor: Int?) = filters.update { it.copy(floor = floor) }
 
-    fun setHk(roomNumber: Int, status: HkStatus) = report(repo.setHk(roomNumber, status))
+    fun setHk(roomNumber: Int, status: HkStatus) = launchReport { repo.setHk(roomNumber, status) }
 
     // Корутины из HW1: горничные убирают все Dirty номера одновременно (по 600 мс на номер)
     fun cleanAllDirty() {

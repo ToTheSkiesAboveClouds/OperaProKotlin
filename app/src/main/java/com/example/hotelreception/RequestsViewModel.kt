@@ -22,7 +22,8 @@ data class RequestFilters(
 
 data class RequestsUiState(
     val filters: RequestFilters,
-    val items: List<ServiceRequest>
+    val items: List<ServiceRequest>,
+    val all: List<ServiceRequest>
 )
 
 private fun buildState(data: HotelData, f: RequestFilters): RequestsUiState {
@@ -36,7 +37,7 @@ private fun buildState(data: HotelData, f: RequestFilters): RequestsUiState {
         }
         // сначала срочные, потом новые
         .sortedWith(compareByDescending<ServiceRequest> { it.priority }.thenByDescending { it.createdAt })
-    return RequestsUiState(f, items)
+    return RequestsUiState(f, items, data.requests)
 }
 
 class RequestsViewModel(
@@ -64,8 +65,22 @@ class RequestsViewModel(
         title: String,
         description: String,
         priority: Boolean,
-        attachments: List<Attachment>
-    ) = report(repo.createRequest(department, location, title, description, priority, attachments))
+        attachments: List<Attachment>,
+        onDone: (Outcome) -> Unit
+    ) = launchReport(onDone) { repo.createRequest(department, location, title, description, priority, attachments) }
 
-    fun advance(id: Int, status: RequestStatus) = report(repo.advanceRequest(id, status))
+    fun updateRequest(
+        id: Int,
+        department: Department,
+        location: String,
+        title: String,
+        description: String,
+        priority: Boolean,
+        attachments: List<Attachment>,
+        onDone: (Outcome) -> Unit
+    ) = launchReport(onDone) { repo.updateRequest(id, department, location, title, description, priority, attachments) }
+
+    fun deleteRequest(id: Int, onDone: (Outcome) -> Unit = {}) = launchReport(onDone) { repo.deleteRequest(id) }
+
+    fun advance(id: Int, status: RequestStatus) = launchReport { repo.advanceRequest(id, status) }
 }

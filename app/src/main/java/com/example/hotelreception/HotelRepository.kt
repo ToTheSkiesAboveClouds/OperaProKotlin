@@ -1,272 +1,255 @@
 package com.example.hotelreception
 
-import kotlinx.coroutines.flow.MutableStateFlow
+import android.content.Context
+import androidx.room.withTransaction
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.runBlocking
 import java.time.LocalDate
 import java.time.LocalDateTime
 
 // =====================================================================
-// РЕПОЗИТОРИЙ (слой Data). Единственное место, где живут данные отеля и где они меняются.
-// ViewModel'и только читают data и вызывают функции репозитория.
-// Сейчас данные в памяти; во второй половине семестра здесь появится база данных,
-// а ViewModel'и и экраны менять не придётся.
+// РЕПОЗИТОРИЙ (слой Data). Единственный вход к базе данных Room.
+//  - data: StateFlow со всеми данными отеля. Он строится из Flow таблиц Room, поэтому после
+//    любой записи в базу все экраны обновляются сами.
+//  - suspend-функции ниже меняют данные. Каждая выполняется одной транзакцией:
+//    прочитать всё -> применить операцию из HotelOperations.kt -> записать изменения.
+//    Если операция нарушила правило, транзакция откатывается, а пользователь видит причину.
+// ViewModel'и и экраны про Room ничего не знают: они работают только с этим классом.
 // =====================================================================
 
-// Внутренний способ прервать операцию с понятным сообщением
-private class Rejected(message: String) : RuntimeException(message)
-
-private fun reject(message: String): Nothing = throw Rejected(message)
-
-private fun ok(message: String, id: Int? = null) = Outcome.Success(message, id)
-
-private fun HotelData.requireReservation(id: Int): Reservation =
-    reservationById(id) ?: reject("Бронь №$id не найдена")
-
-private fun HotelData.requireRoom(number: Int): Room =
-    roomByNumber(number) ?: reject("Номер $number не найден")
-
-private fun HotelData.updateReservation(id: Int, change: (Reservation) -> Reservation): HotelData =
-    copy(reservations = reservations.map { if (it.id == id) change(it) else it })
-
-// Добавляет строку в счёт гостя
-private fun HotelData.withEntry(resId: Int, title: String, amount: Int, type: EntryType): HotelData {
-    val entry = FolioEntry(nextEntryId, title, amount, type, today)
-    return copy(nextEntryId = nextEntryId + 1)
-        .updateReservation(resId) { it.copy(folio = it.folio + entry) }
+// Собирает все данные отеля из строк таблиц
+private fun assemble(
+    rooms: List<RoomEntity>,
+    reservations: List<ReservationWithFolio>,
+    requests: List<RequestEntity>,
+    shifts: List<ShiftEntity>,
+    today: LocalDate
+): HotelData {
+    val reservationModels = reservations.map { it.toModel() }
+    val requestModels = requests.map { it.toModel() }
+    val shiftModels = shifts.map { it.toModel() }
+    return HotelData(
+        today = today,
+        rooms = rooms.map { it.toModel() },
+        reservations = reservationModels,
+        requests = requestModels,
+        contacts = SeedData.contacts,
+        shifts = shiftModels,
+        // Следующие номера считаем от самых больших существующих, поэтому они не повторяются
+        nextReservationId = (reservationModels.maxOfOrNull { it.id } ?: 100_000) + 1,
+        nextEntryId = (reservationModels.flatMap { it.folio }.maxOfOrNull { it.id } ?: 0) + 1,
+        nextRequestId = (requestModels.maxOfOrNull { it.id } ?: 0) + 1,
+        nextShiftId = (shiftModels.maxOfOrNull { it.id } ?: 0) + 1
+    )
 }
 
-class HotelRepository(private val clock: () -> LocalDate = { LocalDate.now() }) {
+// Разница между старыми и новыми данными: что добавить или изменить, что удалить
+private data class Diff<T>(val upserts: List<T>, val deletedIds: List<Int>)
 
-    // StateFlow хранит текущее состояние и сообщает подписчикам об изменениях
-    private val _data = MutableStateFlow(SeedData.create(clock()).withAutoAssignedRooms().first)
-    val data: StateFlow<HotelData> = _data.asStateFlow()
+private fun <T> diff(old: List<T>, new: List<T>, id: (T) -> Int): Diff<T> {
+    val oldById = old.associateBy(id)
+    val newIds = new.map(id).toSet()
+    return Diff(
+        upserts = new.filter { oldById[id(it)] != it },
+        deletedIds = oldById.keys.filter { it !in newIds }
+    )
+}
 
-    // Общая обёртка: берёт текущие данные, применяет операцию, сохраняет результат.
-    // Если операция вызвала reject(...), данные не меняются, а вызывающий получает Failure.
-    private fun mutate(block: HotelData.() -> Pair<HotelData, Outcome.Success>): Outcome =
-        synchronized(this) {
-            try {
-                val current = _data.value.copy(today = clock())
+class HotelRepository private constructor(
+    private val db: HotelDatabase,
+    scope: CoroutineScope,
+    private val clock: () -> LocalDate,
+    initial: HotelData
+) {
+    private val dao = db.dao()
+
+    // Flow из четырёх таблиц склеивается в один объект HotelData. stateIn делает из него StateFlow:
+    // у него всегда есть текущее значение, и его удобно собирать в ViewModel.
+    val data: StateFlow<HotelData> = combine(
+        dao.observeRooms(),
+        dao.observeReservations(),
+        dao.observeRequests(),
+        dao.observeShifts()
+    ) { rooms, reservations, requests, shifts ->
+        assemble(rooms, reservations, requests, shifts, clock())
+    }
+        .flowOn(Dispatchers.Default)
+        .stateIn(scope, SharingStarted.Eagerly, initial)
+
+    // Читает все данные из базы один раз
+    private suspend fun load(): HotelData = loadAll(dao, clock())
+
+    // Записывает в базу только то, что изменилось между old и new
+    private suspend fun persist(old: HotelData, new: HotelData) {
+        persistChanges(dao, old, new)
+    }
+
+    // Общая обёртка: транзакция «прочитать -> изменить -> записать».
+    // Если операция вызвала reject(...), транзакция откатывается, а вызывающий получает Failure.
+    private suspend fun mutate(block: HotelData.() -> Step): Outcome =
+        try {
+            db.withTransaction {
+                val current = load()
                 val (next, success) = current.block()
-                _data.value = next
+                persist(current, next)
                 success
-            } catch (e: Rejected) {
-                Outcome.Failure(e.message ?: "Операция не выполнена")
             }
+        } catch (e: Rejected) {
+            Outcome.Failure(e.message ?: "Операция не выполнена")
         }
 
-    // ---------- Брони: номера ----------
+    // ---------- Брони: номера, заселение, выселение ----------
 
-    fun autoAssignRooms(): Outcome = mutate {
-        val (next, count) = withAutoAssignedRooms()
-        if (count == 0) reject("Нет броней, которым можно назначить номер")
-        next to ok("Назначено номеров: $count")
-    }
-
-    fun assignRoom(resId: Int, roomNumber: Int): Outcome = mutate {
-        val res = requireReservation(resId)
-        if (res.status != ResStatus.CONFIRMED) reject("Номер назначается только ожидаемой брони")
-        val room = requireRoom(roomNumber)
-        if (room.roomClass != res.roomClass) reject("Номер $roomNumber другого класса")
-        if (room.hk == HkStatus.MAINTENANCE) reject("Номер $roomNumber на ремонте")
-        if (!isRoomFree(roomNumber, res.arrival, res.departure, res.id)) reject("Номер $roomNumber занят на эти даты")
-        updateReservation(resId) { it.copy(roomNumber = roomNumber) } to ok("Назначен номер $roomNumber")
-    }
-
-    fun attachPassport(resId: Int, path: String): Outcome = mutate {
-        requireReservation(resId)
-        updateReservation(resId) { it.copy(passportPath = path) } to ok("Скан паспорта сохранён")
-    }
-
-    // ---------- Брони: заселение и выселение ----------
-
-    fun checkIn(resId: Int): Outcome = mutate {
-        val res = requireReservation(resId)
-        if (res.status != ResStatus.CONFIRMED) reject("Гость уже заселён или выселен")
-        if (res.arrival.isAfter(today)) reject("Заезд запланирован на ${res.arrival.full()}")
-        val number = res.roomNumber ?: reject("Сначала назначьте номер")
-        val room = requireRoom(number)
-        if (room.hk != HkStatus.CLEAN && room.hk != HkStatus.INSPECTED) {
-            reject("Номер $number в статусе ${room.hk.label}: заселять нельзя")
-        }
-        if (reservations.any { it.roomNumber == number && it.status == ResStatus.IN_HOUSE }) {
-            reject("В номере $number ещё проживает другой гость")
-        }
-        if (res.passportPath == null) reject("Сначала отсканируйте паспорт")
-
-        // При заселении в счёт попадает проживание и скидка лояльности
-        var next = withEntry(
-            resId, "Проживание: ${nightsText(res.nights)} × ${res.rate.tenge()}", res.stayTotal, EntryType.CHARGE
-        )
-        if (res.isLoyalty) {
-            next = next.withEntry(resId, "Скидка лояльности 10%", res.stayTotal / 10, EntryType.DISCOUNT)
-        }
-        next = next.updateReservation(resId) {
-            it.copy(status = ResStatus.IN_HOUSE, checkedInOn = today)
-        }
-        next to ok("Гость ${res.guest.fullName} заселён в номер $number")
-    }
-
-    fun checkOut(resId: Int): Outcome = mutate {
-        val res = requireReservation(resId)
-        if (res.status != ResStatus.IN_HOUSE) reject("Выселять можно только проживающего гостя")
-        val balance = res.balance
-        if (balance > 0) reject("Баланс ${balance.tenge()}: гость должен оплатить. Выселение возможно при балансе 0")
-        if (balance < 0) reject("Баланс ${balance.tenge()}: вернуть деньги или выполнить услугу. Выселение возможно при балансе 0")
-        val number = res.roomNumber
-        copy(
-            rooms = rooms.map { if (it.number == number) it.copy(hk = HkStatus.DIRTY) else it }
-        ).updateReservation(resId) {
-            it.copy(status = ResStatus.CHECKED_OUT, checkedOutOn = today)
-        } to ok("Гость выселен, номер ${number ?: "—"} теперь Dirty")
-    }
+    suspend fun autoAssignRooms() = mutate { opAutoAssignRooms() }
+    suspend fun assignRoom(resId: Int, roomNumber: Int) = mutate { opAssignRoom(resId, roomNumber) }
+    suspend fun attachPassport(resId: Int, path: String) = mutate { opAttachPassport(resId, path) }
+    suspend fun checkIn(resId: Int) = mutate { opCheckIn(resId) }
+    suspend fun checkOut(resId: Int) = mutate { opCheckOut(resId) }
 
     // ---------- Биллинг ----------
 
-    fun addCharge(resId: Int, title: String, amount: Int): Outcome = mutate {
-        val res = requireReservation(resId)
-        if (res.status != ResStatus.IN_HOUSE) reject("Услуги добавляются только проживающему гостю")
-        if (title.isBlank()) reject("Введите название услуги")
-        if (amount <= 0) reject("Сумма должна быть больше нуля")
-        withEntry(resId, title.trim(), amount, EntryType.CHARGE) to ok("Добавлено: ${title.trim()}, ${amount.tenge()}")
-    }
+    suspend fun addCharge(resId: Int, title: String, amount: Int) = mutate { opAddCharge(resId, title, amount) }
+    suspend fun addPayment(resId: Int, amount: Int, method: PaymentMethod?) =
+        mutate { opAddPayment(resId, amount, method) }
+    suspend fun settleBalance(resId: Int) = mutate { opSettleBalance(resId) }
 
-    fun addPayment(resId: Int, amount: Int): Outcome = mutate {
-        val res = requireReservation(resId)
-        if (res.status == ResStatus.CHECKED_OUT) reject("Бронь уже закрыта")
-        if (amount <= 0) reject("Сумма должна быть больше нуля")
-        withEntry(resId, "Оплата: ${res.paymentMethod.label}", amount, EntryType.PAYMENT) to
-            ok("Принята оплата ${amount.tenge()}")
-    }
+    // ---------- Брони: создание, правка, удаление ----------
 
-    // Закрыть баланс: если гость должен — принять оплату, если переплатил — вернуть деньги
-    fun settleBalance(resId: Int): Outcome = mutate {
-        val res = requireReservation(resId)
-        if (res.status != ResStatus.IN_HOUSE) reject("Баланс закрывается у проживающего гостя")
-        val balance = res.balance
-        when {
-            balance > 0 ->
-                withEntry(resId, "Оплата остатка: ${res.paymentMethod.label}", balance, EntryType.PAYMENT) to
-                    ok("Принята оплата ${balance.tenge()}, баланс 0")
-            balance < 0 ->
-                withEntry(resId, "Возврат гостю", -balance, EntryType.REFUND) to
-                    ok("Возвращено ${(-balance).tenge()}, баланс 0")
-            else -> reject("Баланс уже равен 0")
-        }
-    }
+    suspend fun createReservation(draft: ReservationDraft) = mutate { opCreateReservation(draft) }
+    suspend fun updateReservation(resId: Int, draft: ReservationDraft) = mutate { opUpdateReservation(resId, draft) }
+    suspend fun deleteReservation(resId: Int) = mutate { opDeleteReservation(resId) }
 
-    // ---------- Новая бронь ----------
+    // ---------- Номера ----------
 
-    fun createReservation(d: ReservationDraft): Outcome = mutate {
-        if (d.firstName.isBlank() || d.lastName.isBlank()) reject("Введите имя и фамилию гостя")
-        if (d.phone.count { it.isDigit() } < 7) reject("Введите телефон (минимум 7 цифр)")
-        if (d.email.isNotBlank() && !d.email.contains("@")) reject("Почта указана неверно")
-        if (d.nights !in 1..60) reject("Ночей может быть от 1 до 60")
-        if (d.arrival.isBefore(today)) reject("Дата заезда уже прошла")
-        if (d.deposit < 0) reject("Депозит не может быть отрицательным")
-
-        val departure = d.arrival.plusDays(d.nights.toLong())
-        var date = d.arrival
-        while (date.isBefore(departure)) {
-            if (freeCount(d.roomClass, date) < 1) {
-                reject("Нет свободных номеров ${d.roomClass.code} на ${date.full()}")
-            }
-            date = date.plusDays(1)
-        }
-
-        val id = nextReservationId
-        val entries = if (d.deposit > 0) {
-            listOf(FolioEntry(nextEntryId, "Депозит", d.deposit, EntryType.PAYMENT, today))
-        } else {
-            emptyList()
-        }
-        val reservation = Reservation(
-            id = id,
-            guest = Guest(d.firstName.trim(), d.lastName.trim(), d.phone.trim(), d.email.trim()),
-            roomClass = d.roomClass,
-            roomNumber = null,
-            arrival = d.arrival,
-            departure = departure,
-            status = ResStatus.CONFIRMED,
-            ratePlan = d.ratePlan,
-            rate = d.roomClass.baseRate * d.ratePlan.percent / 100,
-            paymentMethod = d.paymentMethod,
-            agency = d.agency.trim(),
-            company = d.company.trim(),
-            isLoyalty = d.isLoyalty,
-            wish = d.wish,
-            passportPath = null,
-            checkedInOn = null,
-            checkedOutOn = null,
-            folio = entries
-        )
-        val created = copy(
-            reservations = reservations + reservation,
-            nextReservationId = id + 1,
-            nextEntryId = nextEntryId + entries.size
-        )
-        // Если заезд скоро, система сразу подбирает номер по классу и пожеланию гостя
-        val (assigned, _) = created.withAutoAssignedRooms()
-        assigned to ok("Бронь №$id создана", id)
-    }
-
-    // ---------- Номера: статус уборки ----------
-
-    fun setHk(roomNumber: Int, newStatus: HkStatus): Outcome = mutate {
-        val room = requireRoom(roomNumber)
-        if (room.hk == newStatus) reject("Номер $roomNumber уже в статусе ${newStatus.label}")
-        val occupancy = occupancyOf(roomNumber)
-        if (newStatus == HkStatus.INSPECTED && room.hk != HkStatus.CLEAN) {
-            reject("Inspected ставится только после Clean: проверяет старшая горничная")
-        }
-        if ((newStatus == HkStatus.MAINTENANCE || newStatus == HkStatus.PICKUP) && occupancy == Occupancy.OCCUPIED) {
-            reject("В номере $roomNumber живёт гость")
-        }
-        if (newStatus == HkStatus.MAINTENANCE && occupancy == Occupancy.ON_ARRIVAL) {
-            reject("На номер $roomNumber назначен скорый заезд, сначала переназначьте его")
-        }
-        copy(rooms = rooms.map { if (it.number == roomNumber) it.copy(hk = newStatus) else it }) to
-            ok("Номер $roomNumber: ${newStatus.label}")
-    }
+    suspend fun setHk(roomNumber: Int, status: HkStatus) = mutate { opSetHk(roomNumber, status) }
 
     // ---------- Запросы в отделы ----------
 
-    fun createRequest(
+    suspend fun createRequest(
         department: Department,
         location: String,
         title: String,
         description: String,
         priority: Boolean,
         attachments: List<Attachment>
-    ): Outcome = mutate {
-        if (location.isBlank()) reject("Укажите номер комнаты или место")
-        if (title.isBlank()) reject("Укажите цель запроса")
-        val request = ServiceRequest(
-            id = nextRequestId,
-            department = department,
-            location = location.trim(),
-            title = title.trim(),
-            description = description.trim(),
-            priority = priority,
-            attachments = attachments,
-            createdBy = CURRENT_USER,
-            createdAt = LocalDateTime.now(),
-            status = RequestStatus.NEW
-        )
-        copy(requests = requests + request, nextRequestId = nextRequestId + 1) to
-            ok("Запрос отправлен в ${department.title}", request.id)
-    }
+    ) = mutate { opCreateRequest(department, location, title, description, priority, attachments) }
 
-    fun advanceRequest(id: Int, newStatus: RequestStatus): Outcome = mutate {
-        val request = requests.firstOrNull { it.id == id } ?: reject("Запрос не найден")
-        if (newStatus.ordinal <= request.status.ordinal) reject("Статус нельзя вернуть назад")
-        copy(requests = requests.map { if (it.id == id) it.copy(status = newStatus) else it }) to
-            ok("Запрос №$id: ${newStatus.label}")
+    suspend fun updateRequest(
+        id: Int,
+        department: Department,
+        location: String,
+        title: String,
+        description: String,
+        priority: Boolean,
+        attachments: List<Attachment>
+    ) = mutate { opUpdateRequest(id, department, location, title, description, priority, attachments) }
+
+    suspend fun deleteRequest(id: Int) = mutate { opDeleteRequest(id) }
+    suspend fun advanceRequest(id: Int, status: RequestStatus) = mutate { opAdvanceRequest(id, status) }
+
+    // ---------- Кассовая смена ----------
+
+    suspend fun openShift(openingCash: Int) = mutate { opOpenShift(CURRENT_USER, openingCash, LocalDateTime.now()) }
+    suspend fun closeShift(countedCash: Int?, note: String) =
+        mutate { opCloseShift(countedCash, note, LocalDateTime.now()) }
+    suspend fun updateShiftNote(id: Int, note: String) = mutate { opUpdateShiftNote(id, note) }
+    suspend fun deleteShift(id: Int) = mutate { opDeleteShift(id) }
+
+    // ---------- Сброс демо-данных ----------
+
+    // Очищает базу и заново записывает стартовые данные (даты снова считаются от сегодняшнего дня)
+    suspend fun resetDemoData(): Outcome {
+        db.withTransaction {
+            clearAll(dao)
+            persistChanges(dao, emptyData(clock()), freshSeed(clock()))
+        }
+        return Outcome.Success("Демо-данные восстановлены")
     }
 
     companion object {
-        // Один общий экземпляр на всё приложение (позже его заменит внедрение зависимостей)
-        val instance: HotelRepository by lazy { HotelRepository() }
+        @Volatile
+        private var _instance: HotelRepository? = null
+
+        // Один общий экземпляр на всё приложение. Создаётся в HotelApp.onCreate.
+        val instance: HotelRepository
+            get() = checkNotNull(_instance) { "HotelRepository не создан: проверьте HotelApp в манифесте" }
+
+        fun init(context: Context, clock: () -> LocalDate = { LocalDate.now() }) {
+            if (_instance != null) return
+            val db = HotelDatabase.create(context)
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            // Один раз при запуске: если база пустая, заполняем её, и читаем текущие данные.
+            // Таблицы маленькие, поэтому ждать приходится доли секунды.
+            val initial = runBlocking(Dispatchers.IO) {
+                val dao = db.dao()
+                db.withTransaction {
+                    if (dao.roomCount() == 0) {
+                        persistChanges(dao, emptyData(clock()), freshSeed(clock()))
+                    }
+                }
+                loadAll(dao, clock())
+            }
+            _instance = HotelRepository(db, scope, clock, initial)
+        }
     }
+}
+
+// ---------- Вспомогательные функции работы с базой ----------
+
+private fun emptyData(today: LocalDate) = HotelData(
+    today = today, rooms = emptyList(), reservations = emptyList(), requests = emptyList(),
+    contacts = SeedData.contacts, shifts = emptyList(),
+    nextReservationId = 100_001, nextEntryId = 1, nextRequestId = 1, nextShiftId = 1
+)
+
+// Стартовые данные с уже назначенными номерами для скорых заездов
+private fun freshSeed(today: LocalDate): HotelData =
+    SeedData.create(today).withAutoAssignedRooms().first
+
+private suspend fun loadAll(dao: HotelDao, today: LocalDate): HotelData =
+    assemble(dao.getRooms(), dao.getReservations(), dao.getRequests(), dao.getShifts(), today)
+
+private suspend fun clearAll(dao: HotelDao) {
+    dao.clearReservations() // счета удаляются вместе с бронями (CASCADE)
+    dao.clearRooms()
+    dao.clearRequests()
+    dao.clearShifts()
+}
+
+private suspend fun persistChanges(dao: HotelDao, old: HotelData, new: HotelData) {
+    // Номера
+    val rooms = diff(old.rooms, new.rooms) { it.number }
+    if (rooms.upserts.isNotEmpty()) dao.upsertRooms(rooms.upserts.map { it.toEntity() })
+
+    // Брони: сначала сами брони, потом их счета (счёт ссылается на бронь)
+    val reservations = diff(old.reservations, new.reservations) { it.id }
+    if (reservations.deletedIds.isNotEmpty()) dao.deleteReservations(reservations.deletedIds)
+    if (reservations.upserts.isNotEmpty()) dao.upsertReservations(reservations.upserts.map { it.toEntity() })
+
+    val oldFolio = old.reservations.flatMap { res -> res.folio.map { res.id to it } }
+    val newFolio = new.reservations.flatMap { res -> res.folio.map { res.id to it } }
+    val folio = diff(oldFolio, newFolio) { it.second.id }
+    val removedWithReservation = reservations.deletedIds.toSet()
+    val folioToDelete = folio.deletedIds.filter { id ->
+        oldFolio.firstOrNull { it.second.id == id }?.first !in removedWithReservation
+    }
+    if (folioToDelete.isNotEmpty()) dao.deleteFolio(folioToDelete)
+    if (folio.upserts.isNotEmpty()) dao.upsertFolio(folio.upserts.map { (resId, entry) -> entry.toEntity(resId) })
+
+    // Запросы
+    val requests = diff(old.requests, new.requests) { it.id }
+    if (requests.deletedIds.isNotEmpty()) dao.deleteRequests(requests.deletedIds)
+    if (requests.upserts.isNotEmpty()) dao.upsertRequests(requests.upserts.map { it.toEntity() })
+
+    // Смены
+    val shifts = diff(old.shifts, new.shifts) { it.id }
+    if (shifts.deletedIds.isNotEmpty()) dao.deleteShifts(shifts.deletedIds)
+    if (shifts.upserts.isNotEmpty()) dao.upsertShifts(shifts.upserts.map { it.toEntity() })
 }

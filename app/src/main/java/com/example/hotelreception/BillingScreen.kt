@@ -52,12 +52,22 @@ fun BillingScreen(
     if (reservation == null) {
         EmptyState(text = "Бронь №$resId не найдена", modifier = modifier)
     } else {
-        BillingContent(res = reservation, viewModel = viewModel, modifier = modifier)
+        BillingContent(
+            res = reservation,
+            shiftOpen = state.shiftOpen,
+            viewModel = viewModel,
+            modifier = modifier
+        )
     }
 }
 
 @Composable
-private fun BillingContent(res: Reservation, viewModel: ReservationsViewModel, modifier: Modifier) {
+private fun BillingContent(
+    res: Reservation,
+    shiftOpen: Boolean,
+    viewModel: ReservationsViewModel,
+    modifier: Modifier
+) {
     var showChargeDialog by rememberSaveable { mutableStateOf(false) }
     var showPaymentDialog by rememberSaveable { mutableStateOf(false) }
     val balance = res.balance
@@ -71,6 +81,14 @@ private fun BillingContent(res: Reservation, viewModel: ReservationsViewModel, m
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         BalanceCard(guestName = res.guest.fullName, balance = balance)
+
+        if (!shiftOpen && active) {
+            Text(
+                text = "Кассовая смена не открыта: оплаты и возвраты не принимаются. Откройте смену на главной.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
 
         if (active) {
             Row(
@@ -135,8 +153,9 @@ private fun BillingContent(res: Reservation, viewModel: ReservationsViewModel, m
     if (showPaymentDialog) {
         PaymentDialog(
             suggested = if (balance > 0) balance else 0,
+            defaultMethod = res.paymentMethod,
             onDismiss = { showPaymentDialog = false },
-            onConfirm = { amount -> viewModel.addPayment(res.id, amount) }
+            onConfirm = { amount, method -> viewModel.addPayment(res.id, amount, method) }
         )
     }
 }
@@ -261,8 +280,16 @@ private fun AddChargeDialog(onDismiss: () -> Unit, onConfirm: (String, Int) -> U
 }
 
 @Composable
-private fun PaymentDialog(suggested: Int, onDismiss: () -> Unit, onConfirm: (Int) -> Unit) {
+private fun PaymentDialog(
+    suggested: Int,
+    defaultMethod: PaymentMethod,
+    onDismiss: () -> Unit,
+    onConfirm: (Int, PaymentMethod) -> Unit
+) {
     var amount by rememberSaveable { mutableStateOf(if (suggested > 0) suggested.toString() else "") }
+    var method by rememberSaveable { mutableStateOf(defaultMethod) }
+    val amountValue = amount.toIntOrNull() ?: 0
+    var showError by rememberSaveable { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Принять оплату") },
@@ -273,18 +300,32 @@ private fun PaymentDialog(suggested: Int, onDismiss: () -> Unit, onConfirm: (Int
                 }
                 OutlinedTextField(
                     value = amount,
-                    onValueChange = { amount = it.filter { ch -> ch.isDigit() } },
+                    onValueChange = { amount = it.filter { ch -> ch.isDigit() }.take(9) },
                     label = { Text("Сумма, ₸") },
+                    isError = showError && amountValue <= 0,
+                    supportingText = if (showError && amountValue <= 0) { { Text("Введите сумму больше нуля") } } else null,
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth()
+                )
+                // Способ оплаты попадает в кассовую смену (наличные считаются в кассе)
+                Text("Способ оплаты", style = MaterialTheme.typography.labelMedium)
+                ChoiceChips(
+                    options = PaymentMethod.entries.toList(),
+                    isSelected = { it == method },
+                    label = { it.label },
+                    onClick = { method = it }
                 )
             }
         },
         confirmButton = {
             TextButton(onClick = {
-                onConfirm(amount.toIntOrNull() ?: 0)
-                onDismiss()
+                if (amountValue <= 0) {
+                    showError = true
+                } else {
+                    onConfirm(amountValue, method)
+                    onDismiss()
+                }
             }) { Text("Принять") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } }

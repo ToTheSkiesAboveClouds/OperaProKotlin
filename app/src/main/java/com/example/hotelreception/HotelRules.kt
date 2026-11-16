@@ -11,7 +11,7 @@ fun HotelData.roomByNumber(number: Int): Room? = rooms.firstOrNull { it.number =
 
 fun HotelData.reservationById(id: Int): Reservation? = reservations.firstOrNull { it.id == id }
 
-private fun isActive(r: Reservation) = r.status == ResStatus.CONFIRMED || r.status == ResStatus.IN_HOUSE
+fun isActive(r: Reservation) = r.status == ResStatus.CONFIRMED || r.status == ResStatus.IN_HOUSE
 
 // Занятость вычисляется из броней, а не хранится отдельно
 fun HotelData.occupancyOf(roomNumber: Int): Occupancy {

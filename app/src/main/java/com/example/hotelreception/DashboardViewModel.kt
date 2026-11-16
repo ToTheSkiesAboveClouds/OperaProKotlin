@@ -12,12 +12,13 @@ data class DashboardUiState(
     val today: LocalDate,
     val stats: DayStats,
     val days: List<LocalDate>,
-    val availability: List<AvailabilityRow>
+    val availability: List<AvailabilityRow>,
+    val shift: Shift?            // открытая кассовая смена (с живыми итогами) или null
 )
 
 private fun HotelData.toDashboardState(): DashboardUiState {
     val (days, rows) = availability(7)
-    return DashboardUiState(today, dayStats(), days, rows)
+    return DashboardUiState(today, dayStats(), days, rows, openShift()?.let { withLiveTotals(it) })
 }
 
 class DashboardViewModel(

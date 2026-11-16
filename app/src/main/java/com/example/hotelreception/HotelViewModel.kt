@@ -1,9 +1,11 @@
 package com.example.hotelreception
 
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 // =====================================================================
 // ОБЩАЯ ОСНОВА ДЛЯ ВСЕХ ViewModel'ей приложения.
@@ -32,5 +34,14 @@ abstract class HotelViewModel : ViewModel() {
             is Outcome.Failure -> outcome.reason
         }
         return outcome
+    }
+
+    // Запускает операцию с базой данных в корутине (на главном потоке БД не трогаем),
+    // показывает результат в Snackbar и сообщает экрану о результате через onDone.
+    protected fun launchReport(onDone: (Outcome) -> Unit = {}, block: suspend () -> Outcome) {
+        viewModelScope.launch {
+            val outcome = report(block())
+            onDone(outcome)
+        }
     }
 }

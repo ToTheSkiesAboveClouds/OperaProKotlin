@@ -49,6 +49,8 @@ fun ReservationDetailsScreen(
     viewModel: ReservationsViewModel,
     snackbarHostState: SnackbarHostState,
     onOpenBilling: () -> Unit,
+    onEdit: () -> Unit,
+    onDeleted: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -64,6 +66,8 @@ fun ReservationDetailsScreen(
             state = state,
             viewModel = viewModel,
             onOpenBilling = onOpenBilling,
+            onEdit = onEdit,
+            onDeleted = onDeleted,
             modifier = modifier
         )
     }
@@ -75,11 +79,14 @@ private fun ReservationDetailsContent(
     state: ReservationsUiState,
     viewModel: ReservationsViewModel,
     onOpenBilling: () -> Unit,
+    onEdit: () -> Unit,
+    onDeleted: () -> Unit,
     modifier: Modifier
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var showRoomDialog by rememberSaveable { mutableStateOf(false) }
+    var showDeleteDialog by rememberSaveable { mutableStateOf(false) }
 
     // Камера: возвращает маленький снимок (Bitmap), сохраняем его в файл в фоновом потоке
     val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap ->
@@ -222,6 +229,37 @@ private fun ReservationDetailsContent(
                 }
             }
         }
+
+        // Правка и удаление брони. Выселенную бронь править нельзя, проживающую удалять нельзя
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            if (res.status != ResStatus.CHECKED_OUT) {
+                OutlinedButton(onClick = onEdit, modifier = Modifier.weight(1f)) {
+                    Text("Изменить")
+                }
+            }
+            if (res.status != ResStatus.IN_HOUSE) {
+                OutlinedButton(onClick = { showDeleteDialog = true }, modifier = Modifier.weight(1f)) {
+                    Text("Удалить", color = MaterialTheme.colorScheme.error)
+                }
+            }
+        }
+    }
+
+    if (showDeleteDialog) {
+        ConfirmDialog(
+            title = "Удалить бронь?",
+            text = "Бронь №${res.id} (${res.guest.fullName}) и её счёт будут удалены без возможности восстановления.",
+            onConfirm = {
+                showDeleteDialog = false
+                viewModel.deleteReservation(res.id) { outcome ->
+                    if (outcome is Outcome.Success) onDeleted()
+                }
+            },
+            onDismiss = { showDeleteDialog = false }
+        )
     }
 
     if (showRoomDialog) {

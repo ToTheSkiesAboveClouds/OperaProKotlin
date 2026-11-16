@@ -14,7 +14,8 @@ data class ReservationsUiState(
     val items: List<Reservation>,      // уже отфильтрованный список для текущей вкладки
     val all: List<Reservation>,        // все брони (для экранов карточки и биллинга)
     val rooms: List<Room>,             // номера (чтобы показать готовность номера при заселении)
-    val today: LocalDate
+    val today: LocalDate,
+    val shiftOpen: Boolean      // есть ли открытая кассовая смена (без неё оплаты не принимаются)
 )
 
 private fun buildState(data: HotelData, filters: ReservationFilters) = ReservationsUiState(
@@ -22,7 +23,8 @@ private fun buildState(data: HotelData, filters: ReservationFilters) = Reservati
     items = data.filterReservations(filters),
     all = data.reservations,
     rooms = data.rooms,
-    today = data.today
+    today = data.today,
+    shiftOpen = data.openShift() != null
 )
 
 // Отвечает за "Ресепшн": Arrivals, In-house, все брони, карточка брони, биллинг, новая бронь.
@@ -59,16 +61,24 @@ class ReservationsViewModel(
     fun selectDateFrom(date: LocalDate?) = filters.update { it.copy(dateFrom = date) }
     fun selectDateTo(date: LocalDate?) = filters.update { it.copy(dateTo = date) }
 
-    // ---------- Действия над бронями ----------
-    fun autoAssign() = report(repo.autoAssignRooms())
-    fun assignRoom(resId: Int, roomNumber: Int) = report(repo.assignRoom(resId, roomNumber))
-    fun attachPassport(resId: Int, path: String) = report(repo.attachPassport(resId, path))
-    fun checkIn(resId: Int) = report(repo.checkIn(resId))
-    fun checkOut(resId: Int) = report(repo.checkOut(resId))
-    fun addCharge(resId: Int, title: String, amount: Int) = report(repo.addCharge(resId, title, amount))
-    fun addPayment(resId: Int, amount: Int) = report(repo.addPayment(resId, amount))
-    fun settleBalance(resId: Int) = report(repo.settleBalance(resId))
-    fun createReservation(draft: ReservationDraft) = report(repo.createReservation(draft))
+    // ---------- Действия над бронями (каждое выполняется в корутине через репозиторий) ----------
+    fun autoAssign() = launchReport { repo.autoAssignRooms() }
+    fun assignRoom(resId: Int, roomNumber: Int) = launchReport { repo.assignRoom(resId, roomNumber) }
+    fun attachPassport(resId: Int, path: String) = launchReport { repo.attachPassport(resId, path) }
+    fun checkIn(resId: Int) = launchReport { repo.checkIn(resId) }
+    fun checkOut(resId: Int) = launchReport { repo.checkOut(resId) }
+    fun addCharge(resId: Int, title: String, amount: Int) = launchReport { repo.addCharge(resId, title, amount) }
+    fun addPayment(resId: Int, amount: Int, method: PaymentMethod?) =
+        launchReport { repo.addPayment(resId, amount, method) }
+    fun settleBalance(resId: Int) = launchReport { repo.settleBalance(resId) }
+
+    // Создание, правка и удаление брони. onDone вызывается, когда база ответила (для навигации).
+    fun createReservation(draft: ReservationDraft, onDone: (Outcome) -> Unit) =
+        launchReport(onDone) { repo.createReservation(draft) }
+    fun updateReservation(resId: Int, draft: ReservationDraft, onDone: (Outcome) -> Unit) =
+        launchReport(onDone) { repo.updateReservation(resId, draft) }
+    fun deleteReservation(resId: Int, onDone: (Outcome) -> Unit) =
+        launchReport(onDone) { repo.deleteReservation(resId) }
 
     // Номера, которые можно назначить этой брони (тот же класс, свободны на даты)
     fun freeRoomsFor(resId: Int): List<Room> {

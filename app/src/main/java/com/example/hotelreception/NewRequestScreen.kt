@@ -36,7 +36,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 // =====================================================================
-// ЭКРАН "НОВЫЙ ЗАПРОС" в отдел: комната, цель, описание, срочность, фото и видео.
+// ЭКРАН "НОВЫЙ ЗАПРОС" / "РЕДАКТИРОВАНИЕ ЗАПРОСА": комната, цель, описание, срочность, фото и видео.
+// editId != null = правим существующий запрос (поля заполнены его данными).
 // =====================================================================
 
 @Composable
@@ -45,25 +46,32 @@ fun NewRequestScreen(
     viewModel: RequestsViewModel,
     snackbarHostState: SnackbarHostState,
     onSent: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    editId: Int? = null
 ) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
     MessageEffect(message, snackbarHostState, viewModel::consumeMessage)
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    var location by rememberSaveable { mutableStateOf("") }
-    var title by rememberSaveable { mutableStateOf("") }
-    var description by rememberSaveable { mutableStateOf("") }
-    var priority by rememberSaveable { mutableStateOf(false) }
+    val editing = editId?.let { id -> state.all.firstOrNull { it.id == id } }
+
+    var location by rememberSaveable { mutableStateOf(editing?.location ?: "") }
+    var title by rememberSaveable { mutableStateOf(editing?.title ?: "") }
+    var description by rememberSaveable { mutableStateOf(editing?.description ?: "") }
+    var priority by rememberSaveable { mutableStateOf(editing?.priority ?: false) }
+    var showErrors by rememberSaveable { mutableStateOf(false) }
+    val locationError = if (location.isBlank()) "Укажите номер комнаты или место" else null
+    val titleError = if (title.isBlank()) "Укажите цель запроса" else null
     // Список путей к прикреплённым файлам; listSaver нужен, чтобы список пережил поворот экрана
     val attachments: SnapshotStateList<String> = rememberSaveable(
         saver = listSaver<SnapshotStateList<String>, String>(
             save = { it.toList() },
             restore = { it.toMutableStateList() }
         )
-    ) { mutableStateListOf() }
+    ) { editing?.attachments?.map { it.path }.orEmpty().toMutableStateList() }
 
     // Галерея: можно выбрать несколько фото и видео сразу
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
@@ -94,6 +102,8 @@ fun NewRequestScreen(
             value = location,
             onValueChange = { location = it },
             label = { Text("Место: номер комнаты") },
+            isError = showErrors && locationError != null,
+            supportingText = if (showErrors && locationError != null) { { Text(locationError) } } else null,
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )
@@ -109,6 +119,8 @@ fun NewRequestScreen(
             value = title,
             onValueChange = { title = it },
             label = { Text("Цель (или свой вариант)") },
+            isError = showErrors && titleError != null,
+            supportingText = if (showErrors && titleError != null) { { Text(titleError) } } else null,
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )
@@ -150,19 +162,19 @@ fun NewRequestScreen(
 
         Button(
             onClick = {
-                val outcome = viewModel.createRequest(
-                    department = department,
-                    location = location,
-                    title = title,
-                    description = description,
-                    priority = priority,
-                    attachments = attachments.map { Attachment(it, isVideoPath(it)) }
-                )
-                if (outcome is Outcome.Success) onSent()
+                showErrors = true
+                if (locationError != null || titleError != null) return@Button
+                val files = attachments.map { Attachment(it, isVideoPath(it)) }
+                val finish: (Outcome) -> Unit = { outcome -> if (outcome is Outcome.Success) onSent() }
+                if (editId == null) {
+                    viewModel.createRequest(department, location, title, description, priority, files, finish)
+                } else {
+                    viewModel.updateRequest(editId, department, location, title, description, priority, files, finish)
+                }
             },
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("Отправить", fontWeight = FontWeight.SemiBold)
+            Text(if (editId == null) "Отправить" else "Сохранить изменения", fontWeight = FontWeight.SemiBold)
         }
     }
 }

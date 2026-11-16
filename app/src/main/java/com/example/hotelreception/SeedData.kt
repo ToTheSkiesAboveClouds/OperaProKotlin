@@ -5,13 +5,25 @@ import java.time.LocalDateTime
 
 // Начальные данные для демо. Даты считаются от "сегодня", поэтому приложение
 // всегда выглядит живым: сегодня есть заезды, выезды и проживающие гости.
-// Позже (вторая половина семестра) этот файл заменится базой данных.
+// Данные записываются в базу Room только при первом запуске (и при сбросе демо-данных).
 object SeedData {
+
+    // Список внутренних номеров (с бумажного листа ресепшена). В будущем — из базы данных.
+    val contacts: List<ContactGroup> = listOf(
+        ContactGroup("Бронирование", listOf(ContactEntry("Reservation", "2009"), ContactEntry("Alika", "2010"), ContactEntry("Andrei", "2030"), ContactEntry("Almat", "2008"))),
+        ContactGroup("Рестораны и SPA", listOf(ContactEntry("Room Service", "2032"), ContactEntry("Restaurant", "2033"), ContactEntry("Restaurant Manager", "2031"), ContactEntry("SPA", "2062"))),
+        ContactGroup("Housekeeping", listOf(ContactEntry("Housekeeping", "2045"), ContactEntry("Housekeeping", "2046"), ContactEntry("Housekeeping", "2047"), ContactEntry("HK Supervisor", "2048"))),
+        ContactGroup("Sales", listOf(ContactEntry("Leila", "2016"))),
+        ContactGroup("Номера (Sales)", listOf(ContactEntry("Alima", "2014"), ContactEntry("Botakoz", "2012"), ContactEntry("Diana", "2013"))),
+        ContactGroup("Конференц-залы и мероприятия", listOf(ContactEntry("Gulnaz", "2068"), ContactEntry("Botakoz", "2012"), ContactEntry("Akliya", "2015"), ContactEntry("Чина", "2037"))),
+        ContactGroup("Finances", listOf(ContactEntry("Mervert", "2017"), ContactEntry("Kamar", "2020"))),
+        ContactGroup("Security / IT / Engineering", listOf(ContactEntry("Security", "2065"), ContactEntry("IT / Orken", "2027"), ContactEntry("Engineer", "2059"), ContactEntry("Chief Engineer", "2057")))
+    )
 
     fun create(today: LocalDate, now: LocalDateTime = LocalDateTime.now()): HotelData {
         var entryId = 1
-        fun entry(title: String, amount: Int, type: EntryType, date: LocalDate) =
-            FolioEntry(entryId++, title, amount, type, date)
+        fun entry(title: String, amount: Int, type: EntryType, date: LocalDate, method: PaymentMethod? = null) =
+            FolioEntry(entryId++, title, amount, type, date, method)
 
         // Проживание + скидка лояльности + полная оплата при заселении
         fun paidStay(nights: Int, rate: Int, loyalty: Boolean, date: LocalDate, method: PaymentMethod): List<FolioEntry> {
@@ -22,7 +34,7 @@ object SeedData {
                 list += entry("Скидка лояльности 10%", total / 10, EntryType.DISCOUNT, date)
                 net -= total / 10
             }
-            list += entry("Оплата: ${method.label}", net, EntryType.PAYMENT, date)
+            list += entry("Оплата: ${method.label}", net, EntryType.PAYMENT, date, method)
             return list
         }
 
@@ -193,16 +205,26 @@ object SeedData {
             ServiceRequest(6, Department.MAINTENANCE, "504", "Протечка", "Течёт кран в ванной, номер закрыт", true, emptyList(), CURRENT_USER, now.minusHours(30), RequestStatus.ACCEPTED)
         )
 
-        // Список внутренних номеров (с бумажного листа ресепшена). В будущем — из базы данных.
-        val contacts = listOf(
-            ContactGroup("Бронирование", listOf(ContactEntry("Reservation", "2009"), ContactEntry("Alika", "2010"), ContactEntry("Andrei", "2030"), ContactEntry("Almat", "2008"))),
-            ContactGroup("Рестораны и SPA", listOf(ContactEntry("Room Service", "2032"), ContactEntry("Restaurant", "2033"), ContactEntry("Restaurant Manager", "2031"), ContactEntry("SPA", "2062"))),
-            ContactGroup("Housekeeping", listOf(ContactEntry("Housekeeping", "2045"), ContactEntry("Housekeeping", "2046"), ContactEntry("Housekeeping", "2047"), ContactEntry("HK Supervisor", "2048"))),
-            ContactGroup("Sales", listOf(ContactEntry("Leila", "2016"))),
-            ContactGroup("Номера (Sales)", listOf(ContactEntry("Alima", "2014"), ContactEntry("Botakoz", "2012"), ContactEntry("Diana", "2013"))),
-            ContactGroup("Конференц-залы и мероприятия", listOf(ContactEntry("Gulnaz", "2068"), ContactEntry("Botakoz", "2012"), ContactEntry("Akliya", "2015"), ContactEntry("Чина", "2037"))),
-            ContactGroup("Finances", listOf(ContactEntry("Mervert", "2017"), ContactEntry("Kamar", "2020"))),
-            ContactGroup("Security / IT / Engineering", listOf(ContactEntry("Security", "2065"), ContactEntry("IT / Orken", "2027"), ContactEntry("Engineer", "2059"), ContactEntry("Chief Engineer", "2057")))
+        // Кассовые смены: две закрытые (история) и одна открытая сегодня
+        val shifts = listOf(
+            Shift(
+                id = 1, openedBy = "Анеля (Shift Leader)", openedAt = now.minusDays(2).withHour(8).withMinute(0),
+                openingCash = 50_000, status = ShiftStatus.CLOSED, closedAt = now.minusDays(2).withHour(20).withMinute(5),
+                totals = ShiftTotals(cash = 184_000, card = 420_000, transfer = 60_000, cashRefunds = 6_000, paymentsCount = 14),
+                countedCash = 228_000, note = ""
+            ),
+            Shift(
+                id = 2, openedBy = CURRENT_USER, openedAt = now.minusDays(1).withHour(8).withMinute(0),
+                openingCash = 40_000, status = ShiftStatus.CLOSED, closedAt = now.minusDays(1).withHour(20).withMinute(10),
+                totals = ShiftTotals(cash = 96_500, card = 310_000, company = 150_000, otherRefunds = 12_000, paymentsCount = 11),
+                countedCash = 135_000,
+                note = "Не хватило 1 500 ₸: выдали сдачу гостю в 104 и не записали"
+            ),
+            Shift(
+                id = 3, openedBy = CURRENT_USER, openedAt = now.minusHours(3),
+                openingCash = 135_000, status = ShiftStatus.OPEN, closedAt = null,
+                totals = ShiftTotals(), countedCash = null, note = ""
+            )
         )
 
         return HotelData(
@@ -211,9 +233,11 @@ object SeedData {
             reservations = reservations,
             requests = requests,
             contacts = contacts,
+            shifts = shifts,
             nextReservationId = (reservations.maxOf { it.id }) + 1,
             nextEntryId = entryId,
-            nextRequestId = requests.maxOf { it.id } + 1
+            nextRequestId = requests.maxOf { it.id } + 1,
+            nextShiftId = shifts.maxOf { it.id } + 1
         )
     }
 }

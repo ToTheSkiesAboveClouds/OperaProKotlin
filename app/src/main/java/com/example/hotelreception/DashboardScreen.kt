@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -44,6 +45,7 @@ fun DashboardScreen(
     onOpenDeparted: () -> Unit,
     onOpenInHouse: () -> Unit,
     onOpenAvailability: () -> Unit,
+    onOpenShift: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     // collectAsStateWithLifecycle: подписка живёт, только пока экран виден (lifecycle-aware)
@@ -130,8 +132,32 @@ fun DashboardScreen(
             }
         }
         item {
+            ShiftCard(shift = state.shift, onClick = onOpenShift)
+        }
+        item {
             SectionCard(title = "Состояние номеров") {
                 RoomStatusOverview(counts = stats.hkCounts)
+            }
+        }
+    }
+}
+
+// Карточка кассовой смены: открыта ли смена и сколько наличных ожидается в кассе
+@Composable
+private fun ShiftCard(shift: Shift?, onClick: () -> Unit) {
+    Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Кассовая смена ›", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            if (shift == null) {
+                Text(
+                    "Смена не открыта: оплаты не принимаются",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            } else {
+                Text("Смена №${shift.id} открыта", style = MaterialTheme.typography.bodyMedium)
+                InfoRow("Принято за смену", shift.totals.received.tenge())
+                InfoRow("Ожидается наличных", shift.expectedCash.tenge(), bold = true)
             }
         }
     }

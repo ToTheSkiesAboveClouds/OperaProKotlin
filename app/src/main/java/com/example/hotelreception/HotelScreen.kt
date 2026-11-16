@@ -55,10 +55,17 @@ object Routes {
     const val NEW_RESERVATION = "new_reservation"
     const val AVAILABILITY = "availability"
     const val NEW_REQUEST = "new_request/{department}"
+    const val EDIT_RESERVATION = "edit_reservation/{id}"
+    const val EDIT_REQUEST = "edit_request/{id}"
+    const val SHIFT = "shift"
+    const val SHIFT_DETAILS = "shift/{id}"
 
     fun reservation(id: Int) = "reservation/$id"
     fun billing(id: Int) = "billing/$id"
     fun newRequest(department: Department) = "new_request/${department.name}"
+    fun editReservation(id: Int) = "edit_reservation/$id"
+    fun editRequest(id: Int) = "edit_request/$id"
+    fun shiftDetails(id: Int) = "shift/$id"
 }
 
 private fun titleFor(route: String?, args: Bundle?): String = when (route) {
@@ -72,6 +79,10 @@ private fun titleFor(route: String?, args: Bundle?): String = when (route) {
     Routes.NEW_RESERVATION -> "Новая бронь"
     Routes.AVAILABILITY -> "Доступность номеров"
     Routes.NEW_REQUEST -> "Новый запрос"
+    Routes.EDIT_RESERVATION -> "Изменить бронь №${args?.getInt(Routes.ARG_ID) ?: 0}"
+    Routes.EDIT_REQUEST -> "Изменить запрос №${args?.getInt(Routes.ARG_ID) ?: 0}"
+    Routes.SHIFT -> "Кассовая смена"
+    Routes.SHIFT_DETAILS -> "Смена №${args?.getInt(Routes.ARG_ID) ?: 0}"
     else -> "Hotel Reception"
 }
 
@@ -86,6 +97,7 @@ fun HotelScreen() {
     val roomsViewModel: RoomsViewModel = viewModel()
     val requestsViewModel: RequestsViewModel = viewModel()
     val contactsViewModel: ContactsViewModel = viewModel()
+    val shiftViewModel: ShiftViewModel = viewModel()
 
     val backStackEntry by navController.currentBackStackEntryAsState()
     val route = backStackEntry?.destination?.route
@@ -152,7 +164,8 @@ fun HotelScreen() {
                         reservationsViewModel.showInHouse()
                         openTab(Destination.RESERVATIONS)
                     },
-                    onOpenAvailability = { navController.navigate(Routes.AVAILABILITY) }
+                    onOpenAvailability = { navController.navigate(Routes.AVAILABILITY) },
+                    onOpenShift = { navController.navigate(Routes.SHIFT) }
                 )
             }
             composable(Routes.AVAILABILITY) {
@@ -175,7 +188,10 @@ fun HotelScreen() {
                     resId = id,
                     viewModel = reservationsViewModel,
                     snackbarHostState = snackbarHostState,
-                    onOpenBilling = { navController.navigate(Routes.billing(id)) }
+                    onOpenBilling = { navController.navigate(Routes.billing(id)) },
+                    onEdit = { navController.navigate(Routes.editReservation(id)) },
+                    // После удаления карточки больше нет: возвращаемся к списку
+                    onDeleted = { navController.popBackStack() }
                 )
             }
             composable(
@@ -199,6 +215,18 @@ fun HotelScreen() {
                     }
                 )
             }
+            composable(
+                route = Routes.EDIT_RESERVATION,
+                arguments = listOf(navArgument(Routes.ARG_ID) { type = NavType.IntType })
+            ) { entry ->
+                NewReservationScreen(
+                    viewModel = reservationsViewModel,
+                    snackbarHostState = snackbarHostState,
+                    editId = entry.arguments?.getInt(Routes.ARG_ID),
+                    // После сохранения возвращаемся в карточку брони
+                    onCreated = { navController.popBackStack() }
+                )
+            }
             composable(Destination.ROOMS.route) {
                 RoomsScreen(viewModel = roomsViewModel, snackbarHostState = snackbarHostState)
             }
@@ -206,7 +234,8 @@ fun HotelScreen() {
                 RequestsScreen(
                     viewModel = requestsViewModel,
                     snackbarHostState = snackbarHostState,
-                    onNewRequest = { department -> navController.navigate(Routes.newRequest(department)) }
+                    onNewRequest = { department -> navController.navigate(Routes.newRequest(department)) },
+                    onEditRequest = { id -> navController.navigate(Routes.editRequest(id)) }
                 )
             }
             composable(
@@ -221,6 +250,39 @@ fun HotelScreen() {
                     viewModel = requestsViewModel,
                     snackbarHostState = snackbarHostState,
                     onSent = { navController.popBackStack() }
+                )
+            }
+            composable(
+                route = Routes.EDIT_REQUEST,
+                arguments = listOf(navArgument(Routes.ARG_ID) { type = NavType.IntType })
+            ) { entry ->
+                val id = entry.arguments?.getInt(Routes.ARG_ID) ?: 0
+                val department = requestsViewModel.state.value.all
+                    .firstOrNull { it.id == id }?.department ?: Department.IT
+                NewRequestScreen(
+                    department = department,
+                    viewModel = requestsViewModel,
+                    snackbarHostState = snackbarHostState,
+                    editId = id,
+                    onSent = { navController.popBackStack() }
+                )
+            }
+            composable(Routes.SHIFT) {
+                ShiftScreen(
+                    viewModel = shiftViewModel,
+                    snackbarHostState = snackbarHostState,
+                    onOpenShift = { id -> navController.navigate(Routes.shiftDetails(id)) }
+                )
+            }
+            composable(
+                route = Routes.SHIFT_DETAILS,
+                arguments = listOf(navArgument(Routes.ARG_ID) { type = NavType.IntType })
+            ) { entry ->
+                ShiftDetailsScreen(
+                    shiftId = entry.arguments?.getInt(Routes.ARG_ID) ?: 0,
+                    viewModel = shiftViewModel,
+                    snackbarHostState = snackbarHostState,
+                    onDeleted = { navController.popBackStack() }
                 )
             }
             composable(Destination.CONTACTS.route) {
